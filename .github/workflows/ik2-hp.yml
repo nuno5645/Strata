@@ -1,0 +1,50 @@
+# ik2-hp: strata-ik2 only (merbanan's inkling2-turing), Linux x64, CUDA 13.0, sm_75 (RTX 2060), for tests on one PC.
+name: ik2-hp
+on:
+  push:
+    branches: [ik2-hp]
+  workflow_dispatch:
+concurrency:
+  group: ik2-hp-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_MAXSIZE: 2G
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    container: nvidia/cuda:13.0.2-devel-ubuntu22.04
+    steps:
+      - name: Tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git ca-certificates ninja-build ccache gcc-12 g++-12 python3-pip file binutils
+          python3 -m pip install --no-cache-dir 'cmake==3.31.6'
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-ik2-sm75-${{ github.sha }}
+          restore-keys: ccache-ik2-sm75-
+      - name: Configure
+        run: |
+          cmake -G Ninja -S engine -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12 -DCMAKE_CUDA_HOST_COMPILER=g++-12 \
+            -DSTRATA_ENABLE_CUDA=ON -DSTRATA_BUILD_TESTS=OFF -DSTRATA_EXPERIMENTAL_SM60=OFF \
+            -DSTRATA_NATIVE_EXPERTS=ON -DSTRATA_PORTABLE=ON -DSTRATA_Q6K_EXPERTS=ON \
+            "-DCMAKE_CUDA_ARCHITECTURES=75-real" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+      - name: Build strata-ik2
+        run: |
+          cmake --build build --target strata-ik2 -j "$(nproc)"
+          ccache -s | head -6
+          mkdir -p out && cp build/strata-ik2 out/ && ldd out/strata-ik2 | grep -i "cublas\|cudart" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: strata-ik2-sm75
+          path: out
+          retention-days: 14
